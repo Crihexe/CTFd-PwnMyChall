@@ -159,19 +159,6 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
         :return:
         """
 
-        #TODO fare qualcosa qui per rewardare anche il player che l'ha creata
-        # spero di non dover modificare il db
-        data = request.form or request.get_json()
-        submission = data["submission"].strip()
-        solve = Solves(
-            user_id=user.id,
-            team_id=team.id if team else None,
-            challenge_id=challenge.id,
-            ip=get_ip(req=request),
-            provided=submission,
-        )
-        db.session.add(solve)
-
         chal_class = get_chal_class(challenge.type)
         pwnmychall = challenge
         if chal_class is not PwnMyChall:
@@ -180,13 +167,18 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
         creator = pwnmychall.creator
         reward = pwnmychall.reward
         
-        user = Users.query.filter_by(name=creator).first()
+        creator_user = Users.query.filter_by(name=creator).first()
+        
+        if user.id == creator_user.id:  # se chi ha creato la chall prova a risolversela, errore
+            # TODO fare in modo che ritorni un errore all'utente, non ho la minima idea di come fare
+            return
+        else:
+            award = Awards(user_id=creator_user.id, name=challenge.id, value=reward)
+            db.session.add(award)
+            
+            super().solve(user, team, challenge, request)   # in teoria qui dentro fa commit
 
-        award = Awards(user_id=user.id, name=challenge.id, value=reward)
-
-        db.session.add(award)
-
-        db.session.commit()
+        CTFdPwnMyChall.calculate_value(challenge)
 
 pwnmychall_namespace = Namespace("pwnmychall", description="PwnMyChall Endpoints")
 
