@@ -10,6 +10,8 @@ from CTFd.plugins.migrations import upgrade
 from CTFd.plugins.challenges import get_chal_class
 from CTFd.api import CTFd_API_v1
 from CTFd.plugins.dynamic_challenges.decay import DECAY_FUNCTIONS, logarithmic
+from CTFd.api.v1.challenges import ChallengeAttempt
+from CTFd.utils.user import get_current_user
 
 
 basicConfig(level=DEBUG)
@@ -149,6 +151,22 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
         db.session.commit()
 
     @classmethod
+    def attempt(cls, challenge, request):
+        user = get_current_user()
+
+        chal_class = get_chal_class(challenge.type)
+        pwnmychall = challenge
+        if chal_class is not PwnMyChall:
+            pwnmychall = PwnMyChall.query.filter_by(id=challenge.id).first()
+        
+        creator = pwnmychall.creator
+
+        if(user.name == creator):
+            return False, "You are the creator, you can't pwn me!"
+
+        return super().attempt(challenge, request)
+
+    @classmethod
     def solve(cls, user, team, challenge, request):
         """
         This method is used to insert Solves into the database in order to mark a challenge as solved.
@@ -186,8 +204,9 @@ pwnmychall_namespace = Namespace("pwnmychall", description="PwnMyChall Endpoints
 def load(app):
     upgrade()
     app.db.create_all()
+
     register_plugin_assets_directory(app, base_path='/plugins/CTFd-PwnMyChall/assets/')
     challenges.CHALLENGE_CLASSES['pwnmychall'] = CTFdPwnMyChall
-    #app.register_blueprint(restful)
+
     CTFd_API_v1.add_namespace(pwnmychall_namespace, '/pwnmychall')
     
