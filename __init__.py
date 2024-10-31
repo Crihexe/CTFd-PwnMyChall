@@ -1,17 +1,26 @@
 from CTFd.plugins import challenges, register_plugin_assets_directory
 from flask_restx import Namespace, Resource
 from flask import session, Blueprint, abort, jsonify, redirect, url_for, request
-from CTFd.models import db, Challenges, Users, Hints, ChallengeFiles, Awards, Solves, Files, Tags, Teams, Flags, Fails
-from CTFd import utils
+from CTFd.models import db, Challenges, Users, Hints, ChallengeFiles, Awards, Solves, Tags, Flags, Fails
 from CTFd.utils.uploads import delete_file
-from CTFd.utils.user import get_ip
 from logging import basicConfig, getLogger, DEBUG, ERROR
 from CTFd.plugins.migrations import upgrade
 from CTFd.plugins.challenges import get_chal_class
 from CTFd.api import CTFd_API_v1
 from CTFd.plugins.dynamic_challenges.decay import DECAY_FUNCTIONS, logarithmic
-from CTFd.api.v1.challenges import ChallengeAttempt
-from CTFd.utils.user import get_current_user
+from CTFd.utils.user import get_current_user, authed
+from pathlib import Path
+from CTFd.utils.plugins import override_template
+from CTFd.utils.decorators import (
+    admins_only,
+    during_ctf_time_only,
+    require_verified_emails,
+)
+from CTFd.utils.decorators.visibility import (
+    check_account_visibility,
+    check_challenge_visibility,
+    check_score_visibility,
+)
 
 
 basicConfig(level=DEBUG)
@@ -114,6 +123,7 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
             "function": challenge.function,
             "description": challenge.description,
             ##############################
+            "created_by_me": True,
             # forse questi due dovrebbero essere configurabili se visiibli ai player o no
             # per evitare favoritismi tra player non so
             'creator': challenge.creator,
@@ -188,7 +198,6 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
         creator_user = Users.query.filter_by(name=creator).first()
         
         if user.id == creator_user.id:  # se chi ha creato la chall prova a risolversela, errore
-            # TODO fare in modo che ritorni un errore all'utente, non ho la minima idea di come fare
             return
         else:
             award = Awards(user_id=creator_user.id, name=challenge.id, value=reward)
@@ -200,6 +209,39 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
 
 pwnmychall_namespace = Namespace("pwnmychall", description="PwnMyChall Endpoints")
 
+@pwnmychall_namespace.route("/challenges/byme")
+class Challenge(Resource):
+    @check_challenge_visibility
+    @during_ctf_time_only
+    @require_verified_emails
+    def get(self):
+        if authed():
+            user = get_current_user()
+        else:
+            return {"success": False, "error": "User not authed."}
+
+        challs = PwnMyChall.query.all()
+        data = []
+        for c in challs:
+            if c.creator == user.name:
+                data.append(c.id)
+        return {"success": True, "data": data}
+
+@pwnmychall_namespace.route("/challenges/<chal_id>/byme")
+class Challenge(Resource):
+    @check_challenge_visibility
+    @during_ctf_time_only
+    @require_verified_emails
+    def get(self, chal_id):
+        if authed():
+            user = get_current_user()
+        else:
+            return {"success": False, "error": "User not authed."}
+
+        chal = PwnMyChall.query.filter_by(id=chal_id).first()
+        
+        return {"success": True, "data": chal.creator==user.name}
+
 
 def load(app):
     upgrade()
@@ -207,6 +249,10 @@ def load(app):
 
     register_plugin_assets_directory(app, base_path='/plugins/CTFd-PwnMyChall/assets/')
     challenges.CHALLENGE_CLASSES['pwnmychall'] = CTFdPwnMyChall
+
+    dir_path = Path(__file__).parent.resolve()
+    template_path = dir_path / 'templates' / 'challenges.html'
+    override_template('challenges.html', open(template_path).read())
 
     CTFd_API_v1.add_namespace(pwnmychall_namespace, '/pwnmychall')
     

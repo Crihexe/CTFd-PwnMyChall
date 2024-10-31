@@ -7,8 +7,17 @@ CTFd._internal.challenge.preRender = function() {};
 
 // TODO: Remove in CTFd v4.0
 CTFd._internal.challenge.render = null;
+document.addEventListener("DOMContentLoaded", e => {
+    console.log("SWAG")
+    console.log(document.querySelector("#challenge-id"));
+    console.log(CTFd.lib.$("#challenge-id"));
 
-CTFd._internal.challenge.postRender = function() {};
+  })
+CTFd._internal.challenge.postRender = function() {
+  if(CTFd._internal.challenge.data.created_by_me) {
+    // TODO
+  }
+};
 
 CTFd._internal.challenge.submit = function(preview) {
   var challenge_id = parseInt(CTFd.lib.$("#challenge-id").val());
