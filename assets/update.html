@@ -56,4 +56,67 @@
 	</label>
 	<input type="number" class="form-control chal-minimum" name="minimum" value="{{ challenge.minimum }}" required>
 </div>
+
+<div class="form-group">
+	<label>PwnMyChall Challenge Settings:</label>
+
+	<div class="alert alert-secondary" role="alert">
+		PwnMyChall .......
+	</div>
+</div>
+
+<div class="form-group">
+	<label>Creator<br>
+		<small class="form-text text-muted">
+			The user who wrote the challenge. The user named exactly as this field will be rewarded with points.<br>
+		</small>
+	</label>
+	<input type="text" class="form-control" name="creator" value="{{ challenge.creator }}" placeholder="Enter challenge's creator">
+	<button id="bindRewardBtn" onclick="bindReward()" value="{{ challenge.id }}">Try to bind the reward to the creator</button>
+</div>
+
+<div class="form-group">
+	<label for="value">Max Reward<br>
+		<small class="form-text text-muted">
+			The maximum reward in points given to the challenge creator. The less solves the creator's challenge has, the more points will be given to the creator, to this maximum. But note: a 0 solves challenge will be considered impossible and the minimum value will be given to the creator!
+		</small>
+	</label>
+	<input type="number" class="form-control" name="max_reward" value="{{ challenge.max_reward }}" placeholder="Enter a reward" required>
+</div>
+
+<div class="form-group">
+	<label for="value">Min Reward<br>
+		<small class="form-text text-muted">
+			The minimum reward in points given to the challenge creator. The more solves the creator's challenge has, the less points will be given to the creator, to this minimum. If you want the creator to lose points because of a too easy challenge, you can enter a negative value!
+		</small>
+	</label>
+	<input type="number" class="form-control" name="min_reward" value="{{ challenge.min_reward }}" placeholder="Enter a reward" required>
+</div>
+
+<div class="form-group">
+	<div class="alert alert-secondary" role="alert">
+		The reward given to the creator will be calculated based on these values and the current total number of player in the CTF.<br>
+		<span>The reward will be calculated according to this ease function:</span><br>
+		<img src='/plugins/CTFd-PwnMyChall/assets/equation.png'>
+	</div>
+</div>
+
+<div class="form-group">
+	<label for="value">Max Reward Threshold Percentage<br>
+		<small class="form-text text-muted">
+			The first 'x'% solves (on total player number) will still give the maximum reward to the creator.<br><code>0-100</code>
+		</small>
+	</label>
+	<input type="number" class="form-control" name="max_threshold" value="{{ challenge.max_threshold }}" placeholder="Enter a percentage" required>
+</div>
+
+<div class="form-group">
+	<label for="value">Min Reward Threshold Percentage<br>
+		<small class="form-text text-muted">
+			The solves after 'x'% solves (on total player number) will begin to give the minimum reward to the creator.<br><code>0-100</code>
+		</small>
+	</label>
+	<input type="number" class="form-control" name="min_threshold" value="{{ challenge.min_threshold }}" placeholder="Enter a percentage" required>
+</div>
+
 {% endblock %}
