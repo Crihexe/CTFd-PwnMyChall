@@ -128,8 +128,13 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
         award.value = value
 
         if award.user_id == 1: # proviamo a vedere se il creator e' entrato
-            
-
+            try:
+                user = Users.query.filter_by(name=challenge.creator).first()
+                award = PwnMyChallAward.query.filter_by(challenge_id=challenge.id).first()
+                award.user_id = user.id
+            except:
+                pass
+        
         db.session.commit()
         return challenge
         
