@@ -109,27 +109,20 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
 
         max_threshold = challenge.max_threshold/100.0
         min_threshold = challenge.min_threshold/100.0
-        print(f"min_th {min_threshold} ch.m {challenge.min_threshold}")
-        print(f"max_th {max_threshold} ch.m {challenge.max_threshold}")
+        
         players = float(len(get_user_standings())) # per sicurezza il vero numero di player totale giocanti, lo trovo vedendo la query della classifica, siccome il db e' un po' strano e bisognerebbe capire quali Users sono player e quali no
-        print(f"players: {players}")
+
         value = 0
-        print(f"solves: {solves}")
         if solves < 1:
             value = challenge.min_reward
-            print("1")
         elif 1 <= solves and solves <= max_threshold*players:
             value = challenge.max_reward
-            print(min_threshold*players)
         elif solves >= min_threshold*players:
             value = challenge.min_reward
-            print("3")
         elif max_threshold*players < solves and solves < min_threshold*players:
-            print("calcolo con la funzione")
             z = ( (100*solves)/players - challenge.max_threshold )*( 1/(challenge.min_threshold-challenge.max_threshold) )
             z2 = z*z
             value = -1*(z2/(2*(z2-z)+1))*(challenge.max_reward-challenge.min_reward)+challenge.max_reward
-            print(value)
 
         
         award = PwnMyChallAward.query.filter_by(challenge_id=challenge.id).first()
