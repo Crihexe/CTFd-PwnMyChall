@@ -222,6 +222,8 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
         return data
     @classmethod
     def delete(cls, challenge):
+        pmcAward = PwnMyChallAward.query.filter_by(challenge_id=challenge.id).first()
+        Awards.query.filter_by(id=pmcAward.id).delete()
         PwnMyChall.query.filter_by(id=challenge.id).delete()
         super().delete(challenge)
 
