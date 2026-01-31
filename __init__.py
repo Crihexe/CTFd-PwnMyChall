@@ -1,6 +1,6 @@
 from CTFd.plugins import challenges, register_plugin_assets_directory
 from flask_restx import Namespace, Resource
-from flask import session, Blueprint, abort, jsonify, redirect, url_for, request
+from flask import session, Blueprint, abort, jsonify, redirect, url_for, request, render_template
 from CTFd.models import db, Challenges, Users, Hints, ChallengeFiles, Awards, Solves, Tags, Flags, Fails
 from CTFd.utils.uploads import delete_file
 from logging import basicConfig, getLogger, DEBUG, ERROR
@@ -13,6 +13,7 @@ from pathlib import Path
 from CTFd.utils.plugins import override_template
 from CTFd.utils.decorators import (
     admins_only,
+    authed_only,
     during_ctf_time_only,
     require_verified_emails,
 )
@@ -28,6 +29,11 @@ basicConfig(level=DEBUG)
 logger = getLogger(__name__)
 
 restful = Blueprint('pwnmychall', __name__)
+pwnmychall_pages = Blueprint(
+    "pwnmychall_pages",
+    __name__,
+    template_folder="templates",
+)
 
 class PwnMyChallAward(Awards):
     __mapper_args__ = {'polymorphic_identity': 'pwnmychallaward'}
@@ -328,6 +334,12 @@ class Award(Resource):
         except:
             return {"success": False, "error": "Can't bind, creator account doesn't exists yet"}
 
+
+@pwnmychall_pages.route("/pwnmychall/dashboard")
+@authed_only
+def pwnmychall_dashboard():
+    return render_template("pwnmychall_dashboard.html")
+
 def override_challenges_template():
     dir_path = Path(__file__).parent.resolve()
     template_path = dir_path / 'templates' / 'challenges.html'
@@ -341,6 +353,8 @@ def load(app):
     challenges.CHALLENGE_CLASSES['pwnmychall'] = CTFdPwnMyChall
 
     override_challenges_template()
+
+    app.register_blueprint(pwnmychall_pages)
 
     CTFd_API_v1.add_namespace(pwnmychall_namespace, '/pwnmychall')
     
