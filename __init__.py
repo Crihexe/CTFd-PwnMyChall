@@ -1,16 +1,20 @@
 from CTFd.plugins import challenges, register_plugin_assets_directory
 from flask_restx import Namespace, Resource
 from flask import session, Blueprint, abort, jsonify, redirect, url_for, request, render_template
+from CTFd.cache import clear_challenges, clear_standings
 from CTFd.models import db, Challenges, Users, Hints, ChallengeFiles, Awards, Solves, Tags, Flags, Fails
+from CTFd.schemas.flags import FlagSchema
+from CTFd.schemas.tags import TagSchema
 from CTFd.utils.uploads import delete_file
+from CTFd.utils import uploads
 from logging import basicConfig, getLogger, DEBUG, ERROR
 from CTFd.plugins.migrations import upgrade
 from CTFd.plugins.challenges import get_chal_class
 from CTFd.api import CTFd_API_v1
 from CTFd.plugins.dynamic_challenges.decay import DECAY_FUNCTIONS, logarithmic, get_solve_count
-from CTFd.utils.user import get_current_user, authed
+from CTFd.utils.user import get_current_user, authed, is_admin
 from pathlib import Path
-from CTFd.utils.plugins import override_template
+from CTFd.utils.plugins import override_template, register_script
 from CTFd.utils.decorators import (
     admins_only,
     authed_only,
@@ -34,6 +38,60 @@ pwnmychall_pages = Blueprint(
     __name__,
     template_folder="templates",
 )
+
+PWNMYCHALL_DEFAULTS = {
+    "function": "logarithmic",
+    "decay": 10,
+    "max_reward": 100,
+    "min_reward": 10,
+    "max_threshold": 10,
+    "min_threshold": 60,
+}
+
+
+def _get_current_user_or_403():
+    user = get_current_user()
+    if not user:
+        abort(403)
+    return user
+
+
+def _user_can_manage_challenge(user, challenge):
+    return is_admin() or (challenge.creator == user.name)
+
+
+def _get_owned_challenge(challenge_id):
+    challenge = PwnMyChall.query.filter_by(id=challenge_id).first_or_404()
+    user = _get_current_user_or_403()
+    if not _user_can_manage_challenge(user, challenge):
+        abort(403)
+    return challenge, user
+
+
+def _serialize_pwnmychall_summary(challenge):
+    award = PwnMyChallAward.query.filter_by(challenge_id=challenge.id).first()
+    solves = get_solve_count(challenge)
+    return {
+        "id": challenge.id,
+        "name": challenge.name,
+        "category": challenge.category,
+        "state": challenge.state,
+        "value": challenge.value,
+        "solves": solves,
+        "reward": award.value if award else None,
+    }
+
+
+def _serialize_pwnmychall_detail(challenge):
+    data = _serialize_pwnmychall_summary(challenge)
+    data.update(
+        {
+            "description": challenge.description,
+            "initial": challenge.initial,
+            "minimum": challenge.minimum,
+        }
+    )
+    return data
 
 class PwnMyChallAward(Awards):
     __mapper_args__ = {'polymorphic_identity': 'pwnmychallaward'}
@@ -335,10 +393,383 @@ class Award(Resource):
             return {"success": False, "error": "Can't bind, creator account doesn't exists yet"}
 
 
+@pwnmychall_namespace.route("/challenges")
+class PwnMyChallChallengeList(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def get(self):
+        user = _get_current_user_or_403()
+        query = PwnMyChall.query
+        if not is_admin():
+            query = query.filter_by(creator=user.name)
+        data = [_serialize_pwnmychall_summary(c) for c in query.all()]
+        return {"success": True, "data": data}
+
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def post(self):
+        user = _get_current_user_or_403()
+        data = request.get_json() or request.form or {}
+
+        name = data.get("name")
+        category = data.get("category")
+        description = data.get("description", "")
+        state = data.get("state", "hidden")
+        initial = data.get("initial")
+        minimum = data.get("minimum")
+
+        errors = {}
+        if not name:
+            errors["name"] = ["Name is required"]
+        if not category:
+            errors["category"] = ["Category is required"]
+        if initial is None:
+            errors["initial"] = ["Initial value is required"]
+        if minimum is None:
+            errors["minimum"] = ["Minimum value is required"]
+        if errors:
+            return {"success": False, "errors": errors}, 400
+
+        try:
+            initial = float(initial)
+            minimum = float(minimum)
+        except (TypeError, ValueError):
+            return {
+                "success": False,
+                "errors": {"initial": ["Initial and minimum must be numbers"]},
+            }, 400
+
+        if state not in ("visible", "hidden"):
+            state = "hidden"
+
+        challenge = PwnMyChall(
+            name=name,
+            description=description,
+            category=category,
+            state=state,
+            initial=initial,
+            minimum=minimum,
+            decay=PWNMYCHALL_DEFAULTS["decay"],
+            function=PWNMYCHALL_DEFAULTS["function"],
+            creator=user.name,
+            max_reward=PWNMYCHALL_DEFAULTS["max_reward"],
+            min_reward=PWNMYCHALL_DEFAULTS["min_reward"],
+            min_threshold=PWNMYCHALL_DEFAULTS["min_threshold"],
+            max_threshold=PWNMYCHALL_DEFAULTS["max_threshold"],
+        )
+
+        db.session.add(challenge)
+        db.session.flush()
+
+        award = PwnMyChallAward(
+            user_id=user.id,
+            name=challenge.id,
+            challenge_id=challenge.id,
+            value=challenge.min_reward,
+        )
+        db.session.add(award)
+        db.session.commit()
+
+        clear_challenges()
+
+        return {"success": True, "data": _serialize_pwnmychall_detail(challenge)}
+
+
+@pwnmychall_namespace.route("/challenges/<int:challenge_id>")
+class PwnMyChallChallengeDetail(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def get(self, challenge_id):
+        challenge, _user = _get_owned_challenge(challenge_id)
+        return {"success": True, "data": _serialize_pwnmychall_detail(challenge)}
+
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def patch(self, challenge_id):
+        challenge, _user = _get_owned_challenge(challenge_id)
+        data = request.get_json() or {}
+
+        allowed_fields = {"name", "category", "description", "state", "initial", "minimum"}
+        for attr, value in data.items():
+            if attr not in allowed_fields:
+                continue
+            if attr in ("initial", "minimum"):
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    return {"success": False, "errors": {attr: ["Must be a number"]}}, 400
+            if attr == "state" and value not in ("visible", "hidden"):
+                continue
+            setattr(challenge, attr, value)
+
+        CTFdPwnMyChall.calculate_dynamic_value(challenge)
+        CTFdPwnMyChall.calculate_reward_value(challenge)
+
+        clear_standings()
+        clear_challenges()
+
+        return {"success": True, "data": _serialize_pwnmychall_detail(challenge)}
+
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def delete(self, challenge_id):
+        challenge, _user = _get_owned_challenge(challenge_id)
+        chal_class = get_chal_class(challenge.type)
+        chal_class.delete(challenge)
+
+        clear_standings()
+        clear_challenges()
+
+        return {"success": True}
+
+
+@pwnmychall_namespace.route("/challenges/<int:challenge_id>/flags")
+class PwnMyChallChallengeFlags(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def get(self, challenge_id):
+        challenge, _user = _get_owned_challenge(challenge_id)
+        flags = Flags.query.filter_by(challenge_id=challenge.id).all()
+        schema = FlagSchema(many=True)
+        response = schema.dump(flags)
+        if response.errors:
+            return {"success": False, "errors": response.errors}, 400
+        return {"success": True, "data": response.data}
+
+
+@pwnmychall_namespace.route("/flags/types")
+class PwnMyChallFlagTypes(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def get(self):
+        response = {}
+        from CTFd.plugins.flags import FLAG_CLASSES
+
+        for class_id in FLAG_CLASSES:
+            flag_class = FLAG_CLASSES.get(class_id)
+            response[class_id] = {
+                "name": flag_class.name,
+                "templates": flag_class.templates,
+            }
+        return {"success": True, "data": response}
+
+
+@pwnmychall_namespace.route("/flags")
+class PwnMyChallFlags(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def post(self):
+        req = request.get_json() or {}
+        challenge_id = req.get("challenge_id") or req.get("challenge")
+        if not challenge_id:
+            return {"success": False, "errors": {"challenge": ["Missing challenge id"]}}, 400
+
+        challenge, _user = _get_owned_challenge(int(challenge_id))
+
+        schema = FlagSchema()
+        if req.get("type") in ("static", "regex") and req.get("content"):
+            req["content"] = req["content"].strip()
+
+        req["challenge_id"] = challenge.id
+        req.pop("challenge", None)
+
+        response = schema.load(req, session=db.session)
+        if response.errors:
+            return {"success": False, "errors": response.errors}, 400
+
+        db.session.add(response.data)
+        db.session.commit()
+
+        response = schema.dump(response.data)
+        db.session.close()
+        return {"success": True, "data": response.data}
+
+
+@pwnmychall_namespace.route("/flags/<int:flag_id>")
+class PwnMyChallFlag(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def get(self, flag_id):
+        flag = Flags.query.filter_by(id=flag_id).first_or_404()
+        _get_owned_challenge(flag.challenge_id)
+        schema = FlagSchema()
+        response = schema.dump(flag)
+        if response.errors:
+            return {"success": False, "errors": response.errors}, 400
+        return {"success": True, "data": response.data}
+
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def patch(self, flag_id):
+        flag = Flags.query.filter_by(id=flag_id).first_or_404()
+        _get_owned_challenge(flag.challenge_id)
+
+        req = request.get_json() or {}
+        schema = FlagSchema()
+
+        if flag.type in ("static", "regex") and req.get("content"):
+            req["content"] = req["content"].strip()
+
+        req.pop("challenge", None)
+        req.pop("challenge_id", None)
+        req.pop("type", None)
+
+        response = schema.load(req, session=db.session, instance=flag, partial=True)
+        if response.errors:
+            return {"success": False, "errors": response.errors}, 400
+
+        db.session.commit()
+        response = schema.dump(response.data)
+        db.session.close()
+        return {"success": True, "data": response.data}
+
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def delete(self, flag_id):
+        flag = Flags.query.filter_by(id=flag_id).first_or_404()
+        _get_owned_challenge(flag.challenge_id)
+        db.session.delete(flag)
+        db.session.commit()
+        db.session.close()
+        return {"success": True}
+
+
+@pwnmychall_namespace.route("/challenges/<int:challenge_id>/tags")
+class PwnMyChallChallengeTags(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def get(self, challenge_id):
+        challenge, _user = _get_owned_challenge(challenge_id)
+        tags = Tags.query.filter_by(challenge_id=challenge.id).all()
+        response = [{"id": t.id, "challenge_id": t.challenge_id, "value": t.value} for t in tags]
+        return {"success": True, "data": response}
+
+
+@pwnmychall_namespace.route("/tags")
+class PwnMyChallTags(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def post(self):
+        req = request.get_json() or {}
+        challenge_id = req.get("challenge_id") or req.get("challenge")
+        if not challenge_id:
+            return {"success": False, "errors": {"challenge": ["Missing challenge id"]}}, 400
+
+        challenge, _user = _get_owned_challenge(int(challenge_id))
+        schema = TagSchema()
+        req["challenge_id"] = challenge.id
+        req.pop("challenge", None)
+        response = schema.load(req, session=db.session)
+        if response.errors:
+            return {"success": False, "errors": response.errors}, 400
+
+        db.session.add(response.data)
+        db.session.commit()
+        response = schema.dump(response.data)
+        db.session.close()
+        return {"success": True, "data": response.data}
+
+
+@pwnmychall_namespace.route("/tags/<int:tag_id>")
+class PwnMyChallTag(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def delete(self, tag_id):
+        tag = Tags.query.filter_by(id=tag_id).first_or_404()
+        _get_owned_challenge(tag.challenge_id)
+        db.session.delete(tag)
+        db.session.commit()
+        db.session.close()
+        return {"success": True}
+
+
+@pwnmychall_namespace.route("/challenges/<int:challenge_id>/files")
+class PwnMyChallChallengeFiles(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def get(self, challenge_id):
+        challenge, _user = _get_owned_challenge(challenge_id)
+        files = ChallengeFiles.query.filter_by(challenge_id=challenge.id).all()
+        response = [
+            {"id": f.id, "type": f.type, "location": f.location, "sha1sum": f.sha1sum}
+            for f in files
+        ]
+        return {"success": True, "data": response}
+
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def post(self, challenge_id):
+        challenge, _user = _get_owned_challenge(challenge_id)
+        files = request.files.getlist("file")
+        location = request.form.get("location")
+
+        if len(files) > 1 and location:
+            return {
+                "success": False,
+                "errors": {"location": ["Location cannot be specified with multiple files"]},
+            }, 400
+
+        objs = []
+        for f in files:
+            try:
+                obj = uploads.upload_file(
+                    file=f, challenge_id=challenge.id, type="challenge", location=location
+                )
+            except ValueError as e:
+                return {"success": False, "errors": {"location": [str(e)]}}, 400
+            objs.append(obj)
+
+        response = [
+            {"id": f.id, "type": f.type, "location": f.location, "sha1sum": f.sha1sum}
+            for f in objs
+        ]
+        return {"success": True, "data": response}
+
+
+@pwnmychall_namespace.route("/files/<int:file_id>")
+class PwnMyChallFile(Resource):
+    @authed_only
+    @during_ctf_time_only
+    @require_verified_emails
+    def delete(self, file_id):
+        f = ChallengeFiles.query.filter_by(id=file_id).first_or_404()
+        _get_owned_challenge(f.challenge_id)
+        delete_file(file_id=f.id)
+        return {"success": True}
+
+
 @pwnmychall_pages.route("/pwnmychall/dashboard")
 @authed_only
 def pwnmychall_dashboard():
     return render_template("pwnmychall_dashboard.html")
+
+
+@pwnmychall_pages.route("/pwnmychall/challenges/new")
+@authed_only
+def pwnmychall_create():
+    return render_template("pwnmychall_create.html")
+
+
+@pwnmychall_pages.route("/pwnmychall/challenges/<int:challenge_id>/edit")
+@authed_only
+def pwnmychall_edit(challenge_id):
+    return render_template("pwnmychall_edit.html", challenge_id=challenge_id)
 
 def override_challenges_template():
     dir_path = Path(__file__).parent.resolve()
@@ -355,6 +786,7 @@ def load(app):
     override_challenges_template()
 
     app.register_blueprint(pwnmychall_pages)
+    register_script("/plugins/CTFd-PwnMyChall/assets/navbar.js")
 
     CTFd_API_v1.add_namespace(pwnmychall_namespace, '/pwnmychall')
     

@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="jumbotron">
+    <div class="container">
+      <h1>Modifica PwnMyChall</h1>
+      <p class="lead">Challenge #{{ challenge_id }} (mock)</p>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="row">
+      <div class="col-lg-8">
+        <form id="pwnmychall-edit-form" data-challenge-id="{{ challenge_id }}">
+          <h4 class="mb-3">Informazioni base</h4>
+          <div class="form-group mb-3">
+            <label for="pmc-name">Nome</label>
+            <input id="pmc-name" class="form-control" type="text" required>
+          </div>
+          <div class="form-group mb-3">
+            <label for="pmc-category">Categoria</label>
+            <input id="pmc-category" class="form-control" type="text" required>
+          </div>
+          <div class="form-group mb-3">
+            <label for="pmc-state">Stato</label>
+            <select id="pmc-state" class="custom-select">
+              <option value="visible">visible</option>
+              <option value="hidden">hidden</option>
+            </select>
+          </div>
+          <div class="form-group mb-4">
+            <label for="pmc-description">Descrizione</label>
+            <textarea id="pmc-description" class="form-control" rows="6"></textarea>
+          </div>
+
+          <div class="alert alert-secondary" role="alert">
+            Dynamic value: il valore della challenge decresce con i solve.
+          </div>
+
+          <div class="form-group mb-3">
+            <label for="pmc-initial">Valore iniziale</label>
+            <input id="pmc-initial" class="form-control" type="number" required>
+          </div>
+          <div class="form-group mb-4">
+            <label for="pmc-minimum">Valore minimo</label>
+            <input id="pmc-minimum" class="form-control" type="number" required>
+          </div>
+
+          <div class="alert alert-secondary" role="alert">
+            Alcuni parametri (decay, reward, creator) sono gestiti dagli admin.
+          </div>
+
+          <div id="pwnmychall-edit-errors" class="alert alert-danger d-none"></div>
+
+          <div class="d-flex gap-2 mb-5">
+            <button class="btn btn-primary" type="submit">Salva modifiche</button>
+            <a class="btn btn-outline-secondary" href="{{ url_for('pwnmychall_pages.pwnmychall_dashboard') }}">Indietro</a>
+          </div>
+        </form>
+      </div>
+
+      <div class="col-lg-4">
+        <div class="card mb-3">
+          <div class="card-body">
+            <h5 class="card-title mb-2">Statistiche</h5>
+            <div class="border rounded p-3 text-center text-muted">
+              Spazio per statistiche (placeholder)
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row mt-4">
+      <div class="col-lg-12">
+        <div class="card mb-4">
+          <div class="card-body">
+            <h5 class="card-title mb-3">Flags</h5>
+            <div id="pwnmychall-flags-error" class="alert alert-danger d-none"></div>
+            <div class="table-responsive">
+              <table class="table table-striped">
+                <thead>
+                  <tr>
+                    <th class="text-center">Type</th>
+                    <th>Flag</th>
+                    <th class="text-center">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody id="pwnmychall-flags-body"></tbody>
+              </table>
+            </div>
+
+            <form id="pwnmychall-flag-form" class="mt-3">
+              <input type="hidden" id="pmc-flag-id">
+              <div class="form-group mb-2">
+                <label for="pmc-flag-type">Tipo</label>
+                <select id="pmc-flag-type" class="custom-select"></select>
+              </div>
+              <div class="form-group mb-2">
+                <label for="pmc-flag-content">Flag</label>
+                <input id="pmc-flag-content" class="form-control" type="text" required>
+              </div>
+              <div class="form-group mb-3">
+                <label for="pmc-flag-data">Case sensitivity</label>
+                <select id="pmc-flag-data" class="custom-select">
+                  <option value="">Case Sensitive</option>
+                  <option value="case_insensitive">Case Insensitive</option>
+                </select>
+              </div>
+              <div class="d-flex gap-2">
+                <button class="btn btn-success" type="submit">Salva flag</button>
+                <button class="btn btn-outline-secondary" id="pmc-flag-cancel" type="button">Annulla</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="card mb-4">
+          <div class="card-body">
+            <h5 class="card-title mb-3">Tags</h5>
+            <div id="pwnmychall-tags" class="mb-3"></div>
+            <div id="pwnmychall-tags-error" class="alert alert-danger d-none"></div>
+            <div class="form-group">
+              <label for="pwnmychall-tag-input">Aggiungi tag</label>
+              <input id="pwnmychall-tag-input" class="form-control" type="text" placeholder="premi invio per aggiungere">
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-4">
+          <div class="card-body">
+            <h5 class="card-title mb-3">Files</h5>
+            <div id="pwnmychall-files-error" class="alert alert-danger d-none"></div>
+            <div class="table-responsive">
+              <table class="table table-striped">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th class="text-center">SHA1</th>
+                    <th class="text-center">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody id="pwnmychall-files-body"></tbody>
+              </table>
+            </div>
+
+            <form id="pwnmychall-file-form" class="mt-3">
+              <div class="form-group mb-2">
+                <label for="pmc-file">Upload file</label>
+                <input id="pmc-file" class="form-control" type="file" required>
+              </div>
+              <div class="form-group mb-3">
+                <label for="pmc-file-location">Location (opzionale)</label>
+                <input id="pmc-file-location" class="form-control" type="text" placeholder="es. pwn/filename.bin">
+              </div>
+              <button class="btn btn-success" type="submit">Carica file</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script defer src="{{ request.script_root }}/plugins/CTFd-PwnMyChall/assets/pwnmychall_edit.js"></script>
+{% endblock %}
