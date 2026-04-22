@@ -88,6 +88,37 @@ def _resolve_creator_user(challenge):
     return Users.query.filter_by(name=creator).first()
 
 
+def _creator_display_name(challenge):
+    creator = _normalize_creator(getattr(challenge, "creator", None))
+    if not creator:
+        return "autore non specificato"
+
+    creator_user = _resolve_creator_user(challenge)
+    if creator_user is not None and getattr(creator_user, "name", None):
+        return str(creator_user.name)
+
+    return creator
+
+
+def _description_with_creator_name(challenge):
+    description = str(getattr(challenge, "description", "") or "")
+    creator = _normalize_creator(getattr(challenge, "creator", None))
+    if not creator:
+        return description
+
+    display_name = _creator_display_name(challenge)
+    if display_name == creator:
+        return description
+
+    normalized = description.replace("\r\n", "\n")
+    old_prefix = f"> Questa challenge è stata scritta da **{creator}**\n\n"
+    if not normalized.startswith(old_prefix):
+        return description
+
+    remainder = normalized[len(old_prefix):]
+    return f"> Questa challenge è stata scritta da **{display_name}**\n\n{remainder}"
+
+
 def _is_creator_user(user, challenge):
     if user is None or challenge is None:
         return False
@@ -140,7 +171,7 @@ def _serialize_pwnmychall_detail(challenge):
     data = _serialize_pwnmychall_summary(challenge)
     data.update(
         {
-            "description": challenge.description,
+            "description": _description_with_creator_name(challenge),
             "initial": challenge.initial,
             "minimum": challenge.minimum,
         }
@@ -314,7 +345,7 @@ class CTFdPwnMyChall(challenges.BaseChallenge):
             "decay": challenge.decay,
             "minimum": challenge.minimum,
             "function": challenge.function,
-            "description": challenge.description,
+            "description": _description_with_creator_name(challenge),
             ##############################
             "created_by_me": _is_creator_user(get_current_user(), challenge),
             # forse questi due dovrebbero essere configurabili se visiibli ai player o no
